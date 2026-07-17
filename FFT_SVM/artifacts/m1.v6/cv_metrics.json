@@ -1,0 +1,15 @@
+{
+  "roc_auc": 0.9603433028361564,
+  "pr_auc": 0.9120500600532196,
+  "threshold": 0.19107898349394625,
+  "confusion_matrix": {
+    "tn": 1981,
+    "fp": 140,
+    "fn": 59,
+    "tp": 464
+  },
+  "APCER_attack_miss_rate": 0.11281070745697896,
+  "BPCER_bonafide_false_reject_rate": 0.066006600660066,
+  "n_bonafide": 2121,
+  "n_attack": 523
+}
