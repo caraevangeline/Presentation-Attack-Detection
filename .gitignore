@@ -1,0 +1,10 @@
+# Python cache - ignored in all folders/subfolders
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Datasets folder
+datasets/
+
+# IDE
+.idea/
