@@ -1,0 +1,13 @@
+# Keep the Docker build context small -- only MiniFASNet/Dockerfile's
+# explicit COPY lines actually get pulled in, but everything below still
+# gets sent to the Docker daemon as part of the build context otherwise.
+**/__pycache__/
+*.pyc
+*.pyo
+.git/
+.idea/
+datasets/
+*.csv
+eval*/
+test_images/
+Silent-Face-Anti-Spoofing/saved_logs/
