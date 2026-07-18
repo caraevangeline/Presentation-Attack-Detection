@@ -1,0 +1,70 @@
+{
+  "patch_info": "2.7_80x80",
+  "input_size": [
+    80,
+    80
+  ],
+  "num_classes": 2,
+  "embedding_size": 128,
+  "conv6_kernel": [
+    5,
+    5
+  ],
+  "class_to_idx": {
+    "real": 0,
+    "spoof": 1
+  },
+  "threshold": 0.6944470405578613,
+  "best_epoch": 28,
+  "val_metrics_at_best_epoch": {
+    "n_bonafide": 319,
+    "n_attack": 229,
+    "roc_auc": 0.9944696171168089,
+    "pr_auc": 0.9958521581920163,
+    "eer": 0.018138013168882035,
+    "eer_threshold": 0.6944470405578613,
+    "at_configured_threshold": {
+      "threshold": 0.5,
+      "APCER": 0.017467248908296942,
+      "BPCER": 0.03761755485893417,
+      "ACER": 0.027542401883615557,
+      "precision": 0.9493670886075949,
+      "recall": 0.982532751091703,
+      "f1": 0.9656652360515021,
+      "tn": 307,
+      "fp": 12,
+      "fn": 4,
+      "tp": 225
+    },
+    "at_eer_threshold": {
+      "threshold": 0.6944470405578613,
+      "APCER": 0.017467248908296942,
+      "BPCER": 0.018808777429467086,
+      "ACER": 0.018138013168882014,
+      "precision": 0.974025974025974,
+      "recall": 0.982532751091703,
+      "f1": 0.9782608695652174,
+      "tn": 313,
+      "fp": 6,
+      "fn": 4,
+      "tp": 225
+    }
+  },
+  "source_pretrained": "D:\\assignment\\Presentation-Attack-Detection\\Silent-Face-Anti-Spoofing\\resources\\anti_spoof_models\\2.7_80x80_MiniFASNetV2.pth",
+  "train_args": {
+    "data_dir": "./data_v7",
+    "pretrained": "D:\\assignment\\Presentation-Attack-Detection\\Silent-Face-Anti-Spoofing\\resources\\anti_spoof_models\\2.7_80x80_MiniFASNetV2.pth",
+    "output_dir": "./artifacts_v7",
+    "epochs": 50,
+    "batch_size": 256,
+    "lr": 0.001,
+    "weight_decay": 0.0005,
+    "milestones": [
+      25,
+      40
+    ],
+    "gamma": 0.1,
+    "num_workers": 4,
+    "seed": 42
+  }
+}

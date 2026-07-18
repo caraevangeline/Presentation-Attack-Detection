@@ -1,0 +1,12 @@
+# Slim requirements for running infer.py only (no training/eval deps like
+# scikit-learn/matplotlib -- see requirements.txt for those). CPU-only torch
+# build, since infer.py's ONNX sessions already fall back to CPU cleanly and
+# a CPU-only image avoids requiring nvidia-docker/CUDA drivers on the host.
+--find-links https://download.pytorch.org/whl/torch_stable.html
+torch==1.11.0+cpu
+torchvision==0.12.0+cpu
+onnx==1.16.1
+onnxruntime==1.18.0
+opencv-python-headless==4.10.0.84
+numpy==1.24.4
+Pillow==10.2.0
