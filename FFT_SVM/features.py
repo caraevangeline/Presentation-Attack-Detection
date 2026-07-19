@@ -1,40 +1,31 @@
 """FFT-based feature extraction for screen-attack (recapture) detection.
 
-Rationale
----------
-An LCD/OLED screen has a fixed sub-pixel grid and, for video, a fixed
-refresh rate. Recapturing that screen with a camera introduces artifacts a
-live face in front of the camera does not produce:
+Recapturing a screen introduces artifacts a live face doesn't produce: moiré aliasing
+between the screen's and camera sensor's pixel grids, showing up as sharp spectral peaks
+instead of natural images' smooth frequency falloff, plus color-channel-specific sub-pixel striping.
+These are global texture-level cues, so detection doesn't depend on a face detector.
 
-  1. Moire aliasing between the screen's pixel grid and the camera
-     sensor's pixel grid -> periodic, high-frequency energy that shows up
-     as sharp peaks in the 2D Fourier spectrum, instead of the smooth,
-     roughly 1/f^2 falloff typical of natural image statistics.
-  2. Color-channel-specific sub-pixel striping (RGB stripe / PenTile
-     panels) that leaves a signature in individual color channels even
-     when it is washed out in luminance.
-
-These are global, texture-level artifacts, so this does not depend on a
-face detector -- it works even on frames where a face detector might
-struggle (e.g. a screen photographed at an angle).
-
-Deliberate exclusion: raw image resolution / aspect ratio. In this
-dataset bona fide images are all exactly 1024x1024 while screen-attack
-images have widely varying native resolutions -- an artifact of how the
-dataset was assembled, not a real anti-spoofing signal. Every image is
-resized to a fixed working resolution before any feature is computed so
-the classifier cannot key on original image size.
+Note: all images are resized to a fixed resolution before feature extraction,
+so the classifier can't key on original image size/aspect ratio (which trivially separates the classes
+in this dataset but isn't a real anti-spoofing signal).
 """
+from __future__ import annotations
 
 import cv2
 import numpy as np
 
-RESIZE_DIM = 384          # fixed working resolution: keeps feature vector
-                           # size constant and removes original-size as a cue
+RESIZE_DIM = 384  # fixed working resolution: keeps feature vector
+# size constant and removes original-size as a cue
 N_RADIAL_BINS = 32
 
 
 def _load_gray_and_channels(path, size=RESIZE_DIM):
+    """Load an image, resize to a fixed square size, and return both its grayscale version and individual color
+    channels for feature extraction.
+    Args:
+        path: path to the image file.
+        size: target width/height in pixels.
+    """
     img = cv2.imread(path, cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError(f"Could not read image: {path}")
@@ -45,6 +36,12 @@ def _load_gray_and_channels(path, size=RESIZE_DIM):
 
 
 def _radial_power_profile(gray, n_bins=N_RADIAL_BINS):
+    """Compute the 2D FFT power spectrum of an image and average it into concentric radial bins (low to high frequency),
+    giving a 1D profile of how power falls off with spatial frequency.
+    Args:
+        gray: 2D grayscale image array.
+        n_bins: number of radial bins to divide the spectrum into.
+    """
     h, w = gray.shape
     f = np.fft.fft2(gray)
     fshift = np.fft.fftshift(f)
@@ -65,6 +62,11 @@ def _radial_power_profile(gray, n_bins=N_RADIAL_BINS):
 
 
 def _peakiness(profile):
+    """Measure how sharply peaked a radial power profile is, relative to its typical (median) level
+    - a proxy for narrowband, periodic energy (e.g. moire) versus the smooth falloff of natural image texture.
+    Args:
+        profile: 1D radial power profile, as returned by _radial_power_profile().
+    """
     # Skip DC + first bin: dominated by low-freq image content, not texture.
     band = profile[2:]
     if band.sum() <= 0:
@@ -73,12 +75,23 @@ def _peakiness(profile):
 
 
 def _high_freq_ratio(profile):
+    """Fraction of total spectral power sitting in the high-frequency band (top 40% of radial bins) --
+    natural images concentrate power at low frequencies, so an elevated ratio suggests recapture artifacts.
+    Args:
+       profile: 1D radial power profile, as returned by _radial_power_profile().
+    """
     n = len(profile)
     hi = profile[int(n * 0.6):]
     return float(hi.sum() / (profile.sum() + 1e-8))
 
 
 def _spectral_slope(profile):
+    """Fit a power-law slope (log-power vs log-frequency) to the radial profile.
+    Natural images follow roughly 1/f^2 falloff (a consistent negative slope); a shallower or irregular slope can
+    indicate non-natural periodic structure like moire.
+    Args:
+        profile: 1D radial power profile, as returned by _radial_power_profile().
+    """
     n = len(profile)
     idx = np.arange(2, n)
     vals = profile[2:]
@@ -90,15 +103,23 @@ def _spectral_slope(profile):
 
 
 FEATURE_NAMES = (
-    [f"radial_bin_{i}" for i in range(N_RADIAL_BINS)]
-    + ["peakiness", "high_freq_ratio", "spectral_slope"]
-    + ["peakiness_B", "peakiness_G", "peakiness_R"]
-    + ["log_laplacian_var"]
+        [f"radial_bin_{i}" for i in range(N_RADIAL_BINS)]
+        + ["peakiness", "high_freq_ratio", "spectral_slope"]
+        + ["peakiness_B", "peakiness_G", "peakiness_R"]
+        + ["log_laplacian_var"]
 )
 
 
 def extract_features(path):
-    """Extract a fixed-length FFT feature vector from an image file."""
+    """Extract a fixed-length FFT feature vector from an image file, for screen-attack (recapture) detection.
+
+    Combines a normalized radial power spectrum (shape-only, scale-free) with scalar summary features: overall and
+    per-channel spectral peakiness (catches luminance and sub-pixel color moire), high-frequency energy ratio,
+    spectral slope, and a Laplacian-variance sharpness proxy.
+
+    Args:
+        path: path to the image file.
+    """
     gray, channels = _load_gray_and_channels(path)
 
     profile = _radial_power_profile(gray)
