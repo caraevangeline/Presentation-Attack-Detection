@@ -325,7 +325,7 @@ if __name__ == "__main__":
     ap.add_argument("--pad_config", default=str(PAD_CONFIG_DEFAULT))
     ap.add_argument("--crop_scale", type=float, default=1.5)
     ap.add_argument("--min_face_conf", type=float, default=0.25)
-    ap.add_argument("--threshold", type=float, default=None,
+    ap.add_argument("--threshold", type=float, default=0.43,
                     help="override the threshold stored in --pad_config")
     ap.add_argument("--face_img_size", type=int, nargs=2, default=[384, 640],
                     help="YOLOv8-face model input size (h w)")
