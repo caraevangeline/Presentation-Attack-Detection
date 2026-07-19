@@ -2,7 +2,7 @@
 # folder of images and get back annotated images + a results CSV.
 #
 # Build (context must be the Presentation-Attack-Detection/ folder, since
-# this needs to COPY the sibling yolov8_face/ directory too -- run from
+# this needs to COPY the MiniFASNet/yolov8_face/ directory too -- run from
 # Presentation-Attack-Detection/):
 #     docker build -f MiniFASNet/Dockerfile -t minifasnet-pad .
 #
@@ -41,14 +41,13 @@ RUN pip install --no-cache-dir -r Presentation-Attack-Detection/MiniFASNet/requi
 
 ARG CHECKPOINT=m2.v7
 
-# App code: MiniFASNet/ and yolov8_face/ are kept as siblings under
-# Presentation-Attack-Detection/, matching the real repo layout, since
-# infer.py locates yolov8_face/ via a relative "../yolov8_face" from its own
-# path (see REPO_ROOT / YOLOV8_FACE_DIR in infer.py).
+# App code: yolov8_face/ now lives nested under MiniFASNet/, matching the
+# real repo layout, since infer.py locates it via a relative
+# "MiniFASNet/yolov8_face" from REPO_ROOT (see YOLOV8_FACE_DIR in infer.py).
 COPY MiniFASNet/infer.py Presentation-Attack-Detection/MiniFASNet/infer.py
-COPY yolov8_face/ops.py Presentation-Attack-Detection/yolov8_face/ops.py
-COPY yolov8_face/yolov8_face_detect_align.py Presentation-Attack-Detection/yolov8_face/yolov8_face_detect_align.py
-COPY yolov8_face/yolov8n-face.onnx Presentation-Attack-Detection/yolov8_face/yolov8n-face.onnx
+COPY MiniFASNet/yolov8_face/ops.py Presentation-Attack-Detection/MiniFASNet/yolov8_face/ops.py
+COPY MiniFASNet/yolov8_face/yolov8_face_detect_align.py Presentation-Attack-Detection/MiniFASNet/yolov8_face/yolov8_face_detect_align.py
+COPY MiniFASNet/yolov8_face/yolov8n-face.onnx Presentation-Attack-Detection/MiniFASNet/yolov8_face/yolov8n-face.onnx
 
 # Baked-in checkpoint, copied to infer.py's own default path
 # (artifacts/model.onnx + artifacts/config.json) so no --pad_model/
