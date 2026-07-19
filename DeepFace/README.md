@@ -66,7 +66,7 @@ python val.py --input_dir /path/to/data --output_csv scores.csv
 - For a flat folder instead, use `--labels_csv labels.csv` with columns `filename,label`
 - Evaluation metrics on **PAD-Test-v1** and **PAD-Test-v2** is saved in `eval_pad_test_v1` and `eval_pad_test_v2` respectively
 
-<img src="assets/deepface_eval.png" width="500">
+<img src="assets/deepface_eval.png" width="700">
 
 **How the attack score is derived:**
 
