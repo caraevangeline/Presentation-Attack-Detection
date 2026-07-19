@@ -1,34 +1,18 @@
-"""Run the FFT + SVM screen-attack detector over a folder of images.
+"""Runs the FFT + SVM screen-attack detector over a folder of images, optionally scored against ground truth.
+Writes one row per image: filename, attack_score (0-1, higher = more likely a screen attack), predicted_label, error.
 
-Plain inference:
-    python val.py --input_dir /path/to/images --output_csv scores.csv \
-        [--model_dir ./artifacts]
+Usage:
+    python val.py --input_dir /path/to/images --output_csv scores.csv
 
-Writes one row per image: filename, attack_score (0-1, higher = more
-likely a screen attack), predicted_label, error (empty if none).
+    # optional eval against ground truth:
+    python val.py --input_dir . --output_csv scores.csv --labeled_dir /path/to/data
+    python val.py --input_dir /path/to/images --output_csv scores.csv --labels_csv labels.csv
 
-Evaluation mode (optional, requires ground truth):
-    python val.py --input_dir . --output_csv scores.csv \
-        --labeled_dir /path/to/datasets/MLE_PlatformAI
-    # or, for a flat folder with a separate labels file:
-    python val.py --input_dir /path/to/images --output_csv scores.csv \
-        --labels_csv labels.csv
-
-If either --labeled_dir (a folder laid out like the training data, with
-Bonafide/ and Screens/ subfolders) or --labels_csv (columns: filename,
-label) is given, scores are additionally compared against ground truth
-and the following are written to --metrics_output_dir
-(default: <output_csv's folder>/eval):
-    pad_metrics.csv / pad_metrics.json  -- ROC-AUC, PR-AUC, EER, and
-        APCER/BPCER/ACER/precision/recall/F1 at both the model's
-        configured threshold and the EER threshold
-    metrics_summary.png  -- the same table + confusion matrices as an image
-    roc_curve.png, pr_curve.png
-
-The dataset-loading and metrics/plotting code is shared (not specific to
-this model) and lives in ../common/pad_eval.py so other model folders can
-reuse it without duplicating it.
+--labeled_dir expects real/spoof subfolders;
+--labels_csv expects filename,label columns.
+    Either writes PAD metrics (ROC-AUC, PR-AUC, EER, APCER/BPCER/ACER, etc.) and plots to --metrics_output_dir.
 """
+from __future__ import annotations
 
 import argparse
 import csv
@@ -57,6 +41,10 @@ IMG_EXTS = {".png", ".jpg", ".jpeg", ".bmp"}
 
 
 def load_artifacts(model_dir):
+    """Load the trained SVM model and its config from disk.
+    Args:
+        model_dir: folder containing 'model.joblib' and 'config.json'.
+    """
     model_dir = Path(model_dir)
     model = load(model_dir / "model.joblib")
     with open(model_dir / "config.json") as f:
@@ -65,7 +53,12 @@ def load_artifacts(model_dir):
 
 
 def score_images(image_paths, model, root):
-    """rel_key -> (score or None, error or None)"""
+    """Extract FFT features and score each image with the trained model.
+    Args:
+        image_paths: list of image file paths to score.
+        model: fitted sklearn pipeline (from load_artifacts()).
+        root: base directory used to compute each image's rel_key.
+    """
     results = {}
     for path in image_paths:
         key = rel_key(path, root)
@@ -79,6 +72,14 @@ def score_images(image_paths, model, root):
 
 
 def write_scores_csv(image_paths, results, threshold, output_csv, root):
+    """Write per-image attack scores and threshold-based predictions to CSV.
+    Args:
+       image_paths: list of image file paths, in the order to write rows.
+       results: dict from score_images(), keyed by rel_key -> (score, error).
+       threshold: cutoff applied to attack_score to derive predicted_label.
+       output_csv: path to write the CSV to (parent folders created if needed).
+       root: base directory used to recompute each path's rel_key.
+    """
     rows = []
     for path in image_paths:
         key = rel_key(path, root)
@@ -98,40 +99,35 @@ def write_scores_csv(image_paths, results, threshold, output_csv, root):
     return rows
 
 
-def main():
-    ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--input_dir", required=True, help="Folder of images to score")
-    ap.add_argument("--output_csv", required=True, help="Where to write the scores CSV")
-    ap.add_argument("--model_dir", default=str(Path(__file__).resolve().parent / "artifacts"))
-    ap.add_argument("--labeled_dir", default=None,
-                    help="Optional eval mode: folder with Bonafide/ and Screens/ subfolders "
-                         "(overrides --input_dir for which images get scored)")
-    ap.add_argument("--labels_csv", default=None,
-                    help="Optional eval mode: CSV with columns filename,label for images in --input_dir")
-    ap.add_argument("--metrics_output_dir", default=None,
-                    help="Where to save the PAD metrics table + ROC/PR curves "
-                         "(default: <output_csv's folder>/eval)")
-    args = ap.parse_args()
-
-    model, config = load_artifacts(args.model_dir)
+def main(input_dir, output_csv, model_dir, labeled_dir, labels_csv, metrics_output_dir):
+    """Score images with the trained FFT+SVM model, write results CSV, and (if ground truth is available) compute and
+    save PAD metrics, plots, and a summary image.
+    Args:
+        input_dir: folder of images to score (used when labeled_dir is not given).
+        output_csv: path to write per-image scores to.
+        model_dir: folder with the trained model.joblib and config.json.
+        labeled_dir: optional folder laid out with real/spoof subfolders.
+        labels_csv: optional filename->label CSV, used with input_dir, for a flat folder (ignored if labeled_dir is given).
+        metrics_output_dir: folder for metrics/plots.
+    """
+    model, config = load_artifacts(model_dir)
     threshold = config["threshold"]
 
     labels = None
-    if args.labeled_dir:
-        root = args.labeled_dir
-        image_paths, labels = gather_labeled_dataset(args.labeled_dir)
+    if labeled_dir:
+        root = labeled_dir
+        image_paths, labels = gather_labeled_dataset(labeled_dir)
     else:
-        root = args.input_dir
-        image_paths = list_images(args.input_dir)
-        if args.labels_csv:
-            labels = load_labels_csv(args.labels_csv)
+        root = input_dir
+        image_paths = list_images(input_dir)
+        if labels_csv:
+            labels = load_labels_csv(labels_csv)
 
     print(f"Found {len(image_paths)} images")
     results = score_images(image_paths, model, root)
-    rows = write_scores_csv(image_paths, results, threshold, args.output_csv, root)
+    rows = write_scores_csv(image_paths, results, threshold, output_csv, root)
     n_errors = sum(1 for r in rows if r["error"])
-    print(f"Wrote {len(rows)} rows to {args.output_csv} ({n_errors} errors)")
+    print(f"Wrote {len(rows)} rows to {output_csv} ({n_errors} errors)")
 
     if labels is None:
         return
@@ -159,7 +155,7 @@ def main():
     y_score = np.array(y_score)
     metrics = compute_pad_metrics(y_true, y_score, threshold)
 
-    metrics_dir = args.metrics_output_dir or str(Path(args.output_csv).resolve().parent / "eval")
+    metrics_dir = metrics_output_dir or str(Path(output_csv).resolve().parent / "eval")
     csv_path, json_path = save_metrics_table(metrics, metrics_dir)
     img_path = save_metrics_image(metrics, metrics_dir)
     roc_path, pr_path = save_curves(y_true, y_score, metrics, metrics_dir)
@@ -173,4 +169,23 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--input_dir", required=True, help="Folder of images to score")
+    ap.add_argument("--output_csv", required=True, help="Where to write the scores CSV")
+    ap.add_argument("--model_dir", default=str(Path(__file__).resolve().parent / "artifacts"))
+    ap.add_argument("--labeled_dir", default=None,
+                    help="Optional eval mode: folder with Bonafide/ and Screens/ subfolders "
+                         "(overrides --input_dir for which images get scored)")
+    ap.add_argument("--labels_csv", default=None,
+                    help="Optional eval mode: CSV with columns filename,label for images in --input_dir")
+    ap.add_argument("--metrics_output_dir", default=None,
+                    help="Where to save the PAD metrics table + ROC/PR curves "
+                         "(default: <output_csv's folder>/eval)")
+    args = ap.parse_args()
+    main(args.input_dir,
+         args.output_csv,
+         args.model_dir,
+         args.labeled_dir,
+         args.labels_csv,
+         args.metrics_output_dir)

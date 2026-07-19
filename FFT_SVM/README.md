@@ -26,7 +26,7 @@ spectral peakiness, high-frequency energy ratio, spectral slope,
 per-channel color-moire peakiness, a blur/sharpness proxy).
 
 Deliberately excluded: raw image resolution and aspect ratio. In the
-originally supplied data, bona fide images were all exactly 1024x1024
+originally supplied data (used for training), bonafide images were all exactly 1024x1024
 while attack images had arbitrary native resolutions, almost certainly a
 dataset-assembly artifact rather than a real signal. Everything is
 resized to a fixed 384x384 before feature extraction so the model cannot
@@ -72,7 +72,7 @@ every image in the input folder (non-recursive, `.png/.jpg/.jpeg/.bmp`).
 `attack_score` is `P(attack)` in `[0, 1]`; `predicted_label` applies the
 threshold stored in `config.json`.
 
-## Evaluation mode
+## Evaluation
 
 If you have ground truth, `val.py` can additionally compute PAD metrics
 against it:
@@ -93,9 +93,7 @@ This writes to `--metrics_output_dir` (default: `<output_csv's folder>/eval`):
 - `metrics_summary.png`: the same table and confusion matrices rendered as an image
 - `roc_curve.png`, `pr_curve.png`
 
-The dataset-loading and metrics/plotting code behind this lives in
-`../common/pad_eval.py`, shared across model folders so other methods can
-reuse the same evaluation pipeline instead of duplicating it.
+<img src="assets/fft_svm_eval.png" width="700">
 
 ## Known limitations / what would break this
 
@@ -110,5 +108,4 @@ reuse the same evaluation pipeline instead of duplicating it.
   could confuse the frequency-domain cues this method relies on.
 - Heavy re-compression or resizing of the input image after capture can
   suppress or alias the very moire signal this method looks for.
-- This has not been validated against video replay attacks or
-  paper-based attacks, only still screen recaptures.
+

@@ -1,24 +1,17 @@
 """Train the FFT + SVM screen-attack detector (Method 1).
 
-Data layout expected (matches the exercise's supplied data):
+Data layout (matches the exercise's supplied data):
     <data_dir>/real/*.png|jpg   -> label 0 (bona fide)
-    <data_dir>/spoof/*.png|jpg    -> label 1 (screen attack)
+    <data_dir>/spoof/*.png|jpg  -> label 1 (screen attack)
 
-Why nested cross-validation:
-There are only small attack examples. Picking hyperparameters and reporting
-performance on the same CV split would leak optimism into the reported
-numbers. We use an outer StratifiedKFold purely for an honest, out-of-fold
-performance estimate, and an inner StratifiedKFold (via GridSearchCV) for
-hyperparameter selection inside each outer training fold. The final
-deployed model is a separate GridSearchCV refit on all available data.
+Uses nested cross-validation: an outer StratifiedKFold gives an honest, out-of-fold performance estimate, while an inner
+StratifiedKFold (via GridSearchCV) selects hyperparameters within each outer fold -- avoiding optimism from tuning and
+evaluating on the same split. The final deployed model is a separate GridSearchCV refit on all available data.
 
-Why SVM over a deep net:
-Small positive examples is not enough to fine-tune a CNN like EfficientNet/MiniFASNet
-without either massive overfitting or needing heavy synthetic
-augmentation whose realism we could not verify. A small hand-crafted
-feature vector (~40 dims) + RBF-SVM is far more sample-efficient and
-remains fast to train (seconds) and to run at inference (milliseconds).
+Usage:
+    python train.py /path/to/data --output_dir ./artifacts
 """
+from __future__ import annotations
 
 import argparse
 import json
@@ -47,6 +40,10 @@ PARAM_GRID = {
 
 
 def load_dataset(data_dir):
+    """Gather image paths and labels from data_dir's real/spoof subfolders.
+    Args:
+        data_dir: root folder containing 'real/' (label 0) and 'spoof/' (label 1) subfolders.
+    """
     data_dir = Path(data_dir)
     paths, labels = [], []
     for sub, label in [("real", 0), ("spoof", 1)]:
@@ -61,6 +58,10 @@ def load_dataset(data_dir):
 
 
 def build_features(paths):
+    """Extract FFT features for a list of image paths, skipping and recording any that fail (e.g. unreadable files).
+    Args:
+        paths: list of image file path strings.
+    """
     feats, ok_idx, failures = [], [], []
     for i, p in enumerate(paths):
         try:
@@ -72,6 +73,10 @@ def build_features(paths):
 
 
 def make_pipeline():
+    """Build the scaler + RBF-SVM pipeline used throughout training/eval.
+    Returns:
+        sklearn Pipeline: StandardScaler -> SVC(rbf, class_weight='balanced').
+    """
     return Pipeline([
         ("scaler", StandardScaler()),
         ("svm", SVC(kernel="rbf", probability=True, class_weight="balanced")),
@@ -79,13 +84,22 @@ def make_pipeline():
 
 
 def nested_cv_evaluate(X, y, n_outer, n_inner, seed):
+    """Run nested cross-validation: an outer loop for an honest, out-of-fold performance estimate, with hyperparameters
+    selected by an inner GridSearchCV within each outer training fold.
+    Args:
+        X: feature matrix.
+        y: label array (0=real, 1=spoof).
+        n_outer: number of outer CV folds.
+        n_inner: number of inner CV folds (for hyperparameter search).
+        seed: random seed for both outer and inner fold splits.
+    """
     outer = StratifiedKFold(n_splits=n_outer, shuffle=True, random_state=seed)
     oof_scores = np.zeros(len(y))
 
     for fold, (tr, te) in enumerate(outer.split(X, y)):
         inner = StratifiedKFold(n_splits=n_inner, shuffle=True, random_state=seed)
         gs = GridSearchCV(make_pipeline(), PARAM_GRID, scoring="average_precision",
-                           cv=inner, n_jobs=-1)
+                          cv=inner, n_jobs=-1)
         gs.fit(X[tr], y[tr])
         oof_scores[te] = gs.predict_proba(X[te])[:, 1]
         print(f"  outer fold {fold + 1}/{n_outer}: best_params={gs.best_params_}, "
@@ -95,17 +109,27 @@ def nested_cv_evaluate(X, y, n_outer, n_inner, seed):
 
 
 def pick_threshold(y_true, scores):
-    """Youden's J statistic: maximizes (sensitivity + specificity - 1)."""
+    """Pick a decision threshold via Youden's J statistic (maximizes sensitivity + specificity - 1).
+    Args:
+        y_true: ground-truth label array (0=real, 1=spoof).
+        scores: predicted attack-probability scores.
+    """
     fpr, tpr, thr = roc_curve(y_true, scores)
     j = tpr - fpr
     return float(thr[np.argmax(j)])
 
 
 def summarize(y_true, scores, threshold):
+    """Compute PAD evaluation metrics at a given threshold.
+   Args:
+       y_true: ground-truth label array (0=real, 1=spoof).
+       scores: predicted attack-probability scores.
+       threshold: decision threshold to apply.
+    """
     preds = (scores >= threshold).astype(int)
     tn, fp, fn, tp = confusion_matrix(y_true, preds, labels=[0, 1]).ravel()
-    apcer = fn / (fn + tp) if (fn + tp) else float("nan")   # attacks missed
-    bpcer = fp / (fp + tn) if (fp + tn) else float("nan")   # bonafide rejected
+    apcer = fn / (fn + tp) if (fn + tp) else float("nan")  # attacks missed
+    bpcer = fp / (fp + tn) if (fp + tn) else float("nan")  # bonafide rejected
     return {
         "roc_auc": float(roc_auc_score(y_true, scores)),
         "pr_auc": float(average_precision_score(y_true, scores)),
@@ -118,21 +142,21 @@ def summarize(y_true, scores, threshold):
     }
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--data_dir", default=str(
-        Path(__file__).resolve().parents[1] / "test" / "data"))
-    ap.add_argument("--output_dir", default=str(Path(__file__).resolve().parent / "artifacts"))
-    ap.add_argument("--n_outer_folds", type=int, default=5)
-    ap.add_argument("--n_inner_folds", type=int, default=3)
-    ap.add_argument("--seed", type=int, default=42)
-    args = ap.parse_args()
-
-    out_dir = Path(args.output_dir)
+def main(data_dir, output_dir, n_outer_folds, n_inner_folds, seed):
+    """Train the FFT + SVM screen-attack detector: extract features, run nested CV for an honest performance estimate,
+    pick a threshold, then fit and save the final deployed model.
+    Args:
+        data_dir: root folder with 'real/' and 'spoof/' subfolders.
+        output_dir: folder to save the trained model, config, and CV metrics into.
+        n_outer_folds: number of outer CV folds (performance estimate).
+        n_inner_folds: number of inner CV folds (hyperparameter search), also used for the final model's GridSearchCV.
+        seed: random seed for reproducible CV splits.
+    """
+    out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Loading dataset from {args.data_dir}")
-    paths, labels = load_dataset(args.data_dir)
+    print(f"Loading dataset from {data_dir}")
+    paths, labels = load_dataset(data_dir)
     print(f"Found {len(paths)} images ({int((labels == 0).sum())} bonafide, "
           f"{int((labels == 1).sum())} attack)")
 
@@ -144,9 +168,9 @@ def main():
         for p, err in failures[:10]:
             print(f"  {p}: {err}")
 
-    print(f"\nRunning nested {args.n_outer_folds}x{args.n_inner_folds} CV "
+    print(f"\nRunning nested {n_outer_folds}x{n_inner_folds} CV "
           f"for an honest out-of-fold performance estimate...")
-    oof_scores = nested_cv_evaluate(X, y, args.n_outer_folds, args.n_inner_folds, args.seed)
+    oof_scores = nested_cv_evaluate(X, y, n_outer_folds, n_inner_folds, seed)
     threshold = pick_threshold(y, oof_scores)
     metrics = summarize(y, oof_scores, threshold)
 
@@ -154,9 +178,9 @@ def main():
     print(json.dumps(metrics, indent=2))
 
     print("\nFitting final GridSearchCV on all data for the deployed model...")
-    final_cv = StratifiedKFold(n_splits=args.n_inner_folds, shuffle=True, random_state=args.seed)
+    final_cv = StratifiedKFold(n_splits=n_inner_folds, shuffle=True, random_state=seed)
     final_gs = GridSearchCV(make_pipeline(), PARAM_GRID, scoring="average_precision",
-                             cv=final_cv, n_jobs=-1)
+                            cv=final_cv, n_jobs=-1)
     final_gs.fit(X, y)
     print(f"Final best_params: {final_gs.best_params_}")
 
@@ -184,4 +208,16 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--data_dir", default=str(
+        Path(__file__).resolve().parents[1] / "test" / "data"))
+    ap.add_argument("--output_dir", default=str(Path(__file__).resolve().parent / "artifacts"))
+    ap.add_argument("--n_outer_folds", type=int, default=5)
+    ap.add_argument("--n_inner_folds", type=int, default=3)
+    ap.add_argument("--seed", type=int, default=42)
+    args = ap.parse_args()
+    main(args.data_dir,
+         args.output_dir,
+         args.n_outer_folds,
+         args.n_inner_folds,
+         args.seed)
