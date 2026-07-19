@@ -102,7 +102,10 @@ Presentation-Attack-Detection/
 
 ## Acknowledgments
 
-`MiniFASNet/` fine-tunes and vendors architecture code from
-[minivision-ai/Silent-Face-Anti-Spoofing](https://github.com/minivision-ai/Silent-Face-Anti-Spoofing)
-(Apache-2.0). `DeepFace/` depends on
-[serengil/deepface](https://github.com/serengil/deepface).
+`MiniFASNet/` fine-tunes and vendors architecture code from [minivision-ai/Silent-Face-Anti-Spoofing](https://github.com/minivision-ai/Silent-Face-Anti-Spoofing)
+(Apache-2.0). `DeepFace/` depends on [serengil/deepface](https://github.com/serengil/deepface).
+
+---
+_AI tools were used to assist with boilerplate code, and polishing written sections of this report. The
+problem framing, experimental design, model and data decisions, and the conclusions drawn from the results reflect my
+own reasoning and Computer vision experience._
