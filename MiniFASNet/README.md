@@ -41,12 +41,12 @@ validation and checkpoint selection, not just a final check.
 ## Train
 
 ```bash
-python finetune.py --data_dir ./data --epochs 20 --batch_size 128 --lr 1e-3
+python finetune.py --data_dir ./data --epochs 25 --batch_size 128 --lr 1e-3
 ```
 
-The checkpoint with the lowest validation ACER is kept.
+The checkpoint with the lowest validation ACER is kept as `best.pth`.
 
-Outputs to `artifacts/`: `model.pth` (best epoch), `config.json`
+Outputs to `artifacts/`: `model_{epoch_n}.pth`, `best.pth`, `config.json`
 (architecture, decision threshold, validation metrics), and
 `training_history.json` (per-epoch curve).
 
