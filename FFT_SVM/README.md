@@ -1,7 +1,5 @@
 # Method 1: FFT + SVM Screen-Attack Detector
 
-## What this is
-
 An add-on baseline experiment for the Screen Attack Detection PAD exercise.
 It scores each image with `P(screen attack)` using hand-crafted FFT
 features and an RBF-SVM.
