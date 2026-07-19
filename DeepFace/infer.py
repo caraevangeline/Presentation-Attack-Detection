@@ -1,26 +1,17 @@
-"""Run DeepFace's anti-spoofing model over a folder of images and save
-annotated output images (green box + REAL, red box + SPOOF, with confidence)
-to an output folder, plus a CSV of per-image results. Mirrors
-Presentation-Attack-Detection/MiniFASNet/infer.py's CLI/annotation style, but
-uses DeepFace's off-the-shelf detector + anti-spoof model instead of our own
-fine-tuned MiniFASNet, so the two can be compared on the same images.
+"""Run DeepFace's anti-spoofing model over a folder of images, saving annotated outputs
+(green=REAL, red=SPOOF, with confidence) and a results CSV. Same annotation style as MiniFASNet/infer.py,
+but uses DeepFace's off-the-shelf detector + model for comparison on the same images.
 
 Usage:
-    python detect.py --input_dir path/to/images --output_dir annotated/ \
-        [--output_csv results.csv] [--known_label bonafide|attack]
+    python infer.py --input_dir path/to/images  \
+                    --output_dir annotated/ \
+                    [--output_csv results.csv] \
+                    [--known_label real|spoof]
 
---known_label is optional: if given, every image in --input_dir is assumed
-to share that ground-truth label, and the CSV/summary additionally flags
-disagreements between DeepFace's prediction and the known label (the
-original use case this script was built for -- auditing a labeled dataset
-for mislabeled/ambiguous images, e.g.:
-    python detect.py --input_dir datasets/train/PAD-test-v1/real \
-        --output_dir annotated/real --known_label bonafide
-    python detect.py --input_dir datasets/train/PAD-test-v1/spoof \
-        --output_dir annotated/spoof --known_label attack
-). Without --known_label, this just runs detection + annotation on an
-arbitrary folder with no label comparison.
+--known_label is optional: if given, every image in --input_dir is treated as having that ground-truth label,
+and the CSV flags disagreements with DeepFace's prediction
 """
+from __future__ import annotations
 
 import argparse
 import csv
@@ -33,6 +24,11 @@ IMG_EXTS = {".png", ".jpg", ".jpeg", ".bmp"}
 
 
 def annotate(img, faces):
+    """Draw bounding boxes and REAL/SPOOF labels on an image.
+    Args:
+        img: input image, BGR (as read by cv2).
+        faces: list of DeepFace face dicts.
+    """
     out = img.copy()
     for face in faces:
         area = face["facial_area"]
@@ -52,6 +48,13 @@ def annotate(img, faces):
 
 
 def process_folder(input_dir, output_dir, known_label=None):
+    """Run DeepFace anti-spoofing over every image in input_dir, saving annotated images and
+    returning per-image results.
+    Args:
+       input_dir: folder of images to process.
+       output_dir: folder to save annotated output images into.
+       known_label: optional ground-truth label ("real"/"spoof") shared by every image in input_dir.
+    """
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -85,17 +88,24 @@ def process_folder(input_dir, output_dir, known_label=None):
 
         # Summarize using the first/largest detected face for the CSV row.
         face_obj = faces[0]
-        model_label = "bonafide" if face_obj["is_real"] else "attack"
+        model_label = "real" if face_obj["is_real"] else "spoof"
         row["model_predicted_label"] = model_label
         row["model_confidence"] = round(face_obj["antispoof_score"], 4)
         row["flag"] = ("DISAGREEMENT" if known_label is not None and model_label != known_label
-                        else "OK")
+                       else "OK")
         results.append(row)
 
     return results
 
 
 def write_csv(results, output_csv, known_label=None):
+    """Write per-image results to a CSV file.
+    Args:
+        results: list of result dicts, as returned by process_folder().
+        output_csv: path to write the CSV to.
+        known_label: pass the same value used in process_folder(), so the "known_label" column is included only
+            when it was actually set.
+    """
     fieldnames = ["filename"]
     if known_label is not None:
         fieldnames.append("known_label")
@@ -109,36 +119,45 @@ def write_csv(results, output_csv, known_label=None):
         writer.writerows(results)
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--input_dir", required=True, help="Folder of images to run detection on")
-    ap.add_argument("--output_dir", required=True, help="Where to save annotated images")
-    ap.add_argument("--output_csv", default=None,
-                    help="Where to save the per-image results CSV (default: <output_dir>/results.csv)")
-    ap.add_argument("--known_label", default=None, choices=["bonafide", "attack"],
-                    help="Optional: if every image in --input_dir shares this ground-truth "
-                         "label, flag disagreements against DeepFace's prediction")
-    args = ap.parse_args()
+def main(input_dir, output_dir, known_label, output_csv):
+    """Run detection over a folder, write results CSV, and print a summary.
+    Args:
+        input_dir: folder of images to process.
+        output_dir: folder to save annotated output images into.
+        known_label: optional ground-truth label ("real"/"spoof") for all images in input_dir.
+        output_csv: path for the results CSV; defaults to "<output_dir>/results.csv" if not given.
+    """
+    results = process_folder(input_dir, output_dir, known_label)
 
-    results = process_folder(args.input_dir, args.output_dir, args.known_label)
-
-    output_csv = args.output_csv or str(Path(args.output_dir) / "results.csv")
-    write_csv(results, output_csv, args.known_label)
+    output_csv = output_csv or str(Path(output_dir) / "results.csv")
+    write_csv(results, output_csv, known_label)
 
     n_total = len(results)
     n_no_face = sum(1 for r in results if r["flag"] == "NO_FACE_DETECTED")
     n_error = sum(1 for r in results if "ERROR" in str(r["flag"]))
     n_disagree = sum(1 for r in results if r["flag"] == "DISAGREEMENT")
 
-    print(f"\n--- Summary for {args.input_dir} ---")
+    print(f"\n--- Summary for {input_dir} ---")
     print(f"Total images: {n_total}")
-    if args.known_label is not None and n_total:
+    if known_label is not None and n_total:
         print(f"Disagreements (possible mislabels): {n_disagree} ({100 * n_disagree / n_total:.1f}%)")
     print(f"No face detected: {n_no_face}")
     print(f"Errors: {n_error}")
-    print(f"Annotated images written to {args.output_dir}")
+    print(f"Annotated images written to {output_dir}")
     print(f"Results written to {output_csv}")
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--input_dir", required=True, help="Folder of images to run detection on")
+    ap.add_argument("--output_dir", required=True, help="Where to save annotated images")
+    ap.add_argument("--output_csv", default=None,
+                    help="Where to save the per-image results CSV (default: <output_dir>/results.csv)")
+    ap.add_argument("--known_label", default=None, choices=["real", "spoof"],
+                    help="Optional: if every image in --input_dir shares this ground-truth "
+                         "label, flag disagreements against DeepFace's prediction")
+    args = ap.parse_args()
+    main(args.input_dir,
+         args.output_dir,
+         args.known_label,
+         args.output_csv)

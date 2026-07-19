@@ -1,38 +1,48 @@
-"""Model-agnostic PAD evaluation utilities: dataset loading against the
-Bonafide/Screens folder layout, and metrics/plots given y_true + y_score.
+"""Model-agnostic PAD evaluation utilities: dataset loading against the Real/Spoof folder layout,
+and metrics/plots given y_true + y_score.
 
-Nothing here depends on how a score was produced, so any model folder
-(FFT+SVM, a CNN, etc.) can import this and get the same metrics table,
-confusion matrices, and ROC/PR curves without duplicating the code.
+Computes ROC-AUC, PR-AUC, EER, and APCER/BPCER/ACER/precision/recall/F1 (at both a configured threshold
+and the EER threshold), plus confusion matrices, rendered as a metrics table image and ROC/PR curve plots.
 """
+from __future__ import annotations
 
 import csv
 import json
 from pathlib import Path
 
 import numpy as np
+import matplotlib
+import matplotlib.pyplot as plt
+from sklearn.metrics import average_precision_score, confusion_matrix, roc_auc_score, roc_curve, precision_recall_curve
 
 IMG_EXTS = {".png", ".jpg", ".jpeg", ".bmp"}
 
 
 def rel_key(path, root):
-    """Path relative to `root`, e.g. 'Screens/00962.png'. Used as the join
-    key everywhere instead of bare filename: in this dataset attack images
-    are recaptures of the same base photos, so Bonafide/ and Screens/ can
-    share filenames -- keying by filename alone silently collides two
-    different images into one dict slot."""
+    """Path relative to `root`, e.g. 'spoof/00962.png'. Used instead of bare filename since
+    real/ and spoof/ can share filenames here.
+    Args:
+        path: full path to the file to generate a key for.
+        root: common base directory that `path` is expressed relative to.
+    """
     return str(Path(path).resolve().relative_to(Path(root).resolve())).replace("\\", "/")
 
 
 def list_images(input_dir):
+    """List all image files directly inside `input_dir`, sorted by name.
+    Args:
+        input_dir: path to the folder to scan.
+    """
     input_dir = Path(input_dir)
     return sorted(p for p in input_dir.iterdir() if p.suffix.lower() in IMG_EXTS)
 
 
 def gather_labeled_dataset(labeled_dir):
-    """labeled_dir laid out like the training data: Bonafide/ (0), Screens/ (1).
-    Labels are keyed by path relative to labeled_dir (e.g. 'Screens/00962.png'),
-    not bare filename, since the two class folders can share filenames."""
+    """Labels are keyed by path relative to labeled_dir (e.g. 'spoof/00962.png'), not bare filename,
+    since the two class folders can share filenames.
+    Args:
+        labeled_dir: root folder containing 'real/' and 'spoof/' subfolders.
+    """
     labeled_dir = Path(labeled_dir)
     paths, labels = [], {}
     for sub, label in [("real", 0), ("spoof", 1)]:
@@ -47,6 +57,10 @@ def gather_labeled_dataset(labeled_dir):
 
 
 def load_labels_csv(labels_csv):
+    """Load a filename -> label CSV, accepting several common label spellings.
+    Args:
+        labels_csv: path to a CSV with 'filename' and 'label' columns.
+    """
     label_map = {"1": 1, "attack": 1, "screen": 1, "screens": 1, "spoof": 1,
                  "0": 0, "bonafide": 0, "real": 0, "genuine": 0}
     labels = {}
@@ -58,8 +72,16 @@ def load_labels_csv(labels_csv):
 
 
 def compute_pad_metrics(y_true, y_score, threshold):
-    from sklearn.metrics import average_precision_score, confusion_matrix, roc_auc_score, roc_curve
+    """Compute standard PAD evaluation metrics at both a given threshold and at the EER threshold, for comparison.
 
+    "Attack" (label=1) is treated as the positive class throughout, per
+    the APCER/BPCER convention: tp/fn are attacks, tn/fp are bonafide.
+
+    Args:
+        y_true: array of ground-truth labels (0 = real/bonafide, 1 = spoof/attack).
+        y_score: array of predicted attack scores/probabilities.
+        threshold: the configured decision threshold.
+    """
     fpr, tpr, thr = roc_curve(y_true, y_score)
     fnr = 1 - tpr
     eer_idx = int(np.argmin(np.abs(fpr - fnr)))
@@ -67,8 +89,6 @@ def compute_pad_metrics(y_true, y_score, threshold):
     eer_threshold = float(thr[eer_idx])
 
     def metrics_at(t):
-        # "attack" (label=1) is the positive class throughout, matching the
-        # APCER/BPCER convention: tp/fn are attacks, tn/fp are bonafide.
         preds = (y_score >= t).astype(int)
         tn, fp, fn, tp = confusion_matrix(y_true, preds, labels=[0, 1]).ravel()
         apcer = fn / (fn + tp) if (fn + tp) else float("nan")  # attacks missed
@@ -98,6 +118,13 @@ def compute_pad_metrics(y_true, y_score, threshold):
 
 
 def save_metrics_table(metrics, output_dir):
+    """Save a PAD metrics dict to disk as both JSON (full detail) and a
+    flattened CSV (one row per metric, for easy viewing/spreadsheet use).
+
+    Args:
+        metrics: dict as returned by compute_pad_metrics().
+        output_dir: folder to write the output files into.
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -136,11 +163,12 @@ def save_metrics_table(metrics, output_dir):
 
 
 def save_metrics_image(metrics, output_dir):
-    """Render the metrics table + confusion matrices as a single PNG."""
-    import matplotlib
+    """Render the metrics table + confusion matrices as a single PNG.
+    Args:
+        metrics: dict as returned by compute_pad_metrics().
+        output_dir: folder to write the output files into.
+    """
     matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -214,10 +242,14 @@ def save_metrics_image(metrics, output_dir):
 
 
 def save_curves(y_true, y_score, metrics, output_dir):
-    import matplotlib
+    """Plot and save ROC and Precision-Recall curves as PNG files.
+    Args:
+        y_true: array of ground-truth labels (0 = real, 1 = spoof).
+        y_score: array of predicted attack scores/probabilities.
+        metrics: dict as returned by compute_pad_metrics().
+        output_dir: folder to save the plot images into.
+    """
     matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from sklearn.metrics import precision_recall_curve, roc_curve
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

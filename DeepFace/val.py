@@ -1,48 +1,17 @@
-"""Run DeepFace's off-the-shelf anti-spoofing model over a folder of images
-and compute PAD metrics against ground truth. Mirrors ../FFT_SVM/val.py and
-../MiniFASNet/val.py's CLI/eval-mode so all three methods can be compared
-the same way.
+"""Runs DeepFace's off-the-shelf anti-spoofing model over a labeled eval folder and computes PAD metrics
+against ground truth. Mirrors ../FFT_SVM/val.py and ../MiniFASNet/val.py for consistent comparison.
+DeepFace's backend is itself a MiniFASNet ensemble (2.7x + 4x crops), so this serves as an "off-the-shelf,
+not fine-tuned" reference point.
 
-Worth knowing: DeepFace's anti-spoofing backend (FasNet) is itself an
-ensemble of two MiniFASNet models at 2.7x and 4x crop scales (see
-site-packages/deepface/models/spoofing/FasNet.py), i.e. the same model
-family and (likely) the same/similar upstream weights ../MiniFASNet fine-
-tunes from -- this method is a useful "off-the-shelf, not fine-tuned on our
-data" reference point against that one, not an unrelated third approach.
+Usage:
+    python val.py --input_dir /path/to/PAD-test-v1 --output_csv scores.csv
+    python val.py --input_dir /path/to/images --output_csv scores.csv --labels_csv labels.csv
 
-DeepFace's extract_faces returns "is_real" (bool) and "antispoof_score"
-(confidence of *whichever* label won -- see FasNet.analyze: it's the
-winning class's softmax probability, not a consistently-oriented P(real) or
-P(attack)). To get a single continuous attack-likelihood score suitable for
-ROC/PR curves and threshold sweeps, this file derives:
-    attack_score = antispoof_score       if is_real is False
-    attack_score = 1 - antispoof_score   if is_real is True
-which is 0 for confidently-real, 1 for confidently-fake, ~0.5 for
-uncertain -- and --threshold defaults to 0.5, which is where that derived
-score flips sign relative to DeepFace's own is_real decision (its actual
-decision boundary; there's no separate tunable threshold exposed by the
-public API, unlike our own fine-tuned models).
-
-Plain inference:
-    python val.py --input_dir /path/to/images --output_csv scores.csv
-
-Evaluation mode (optional, requires ground truth):
-    python val.py --input_dir . --output_csv scores.csv \
-        --labeled_dir /path/to/datasets/train/PAD-test-v1
-    # or, for a flat folder with a separate labels file:
-    python val.py --input_dir /path/to/images --output_csv scores.csv \
-        --labels_csv labels.csv
-
-If either --labeled_dir (a folder laid out like the training data, with
-real/ and spoof/ subfolders) or --labels_csv (columns: filename, label) is
-given, scores are additionally compared against ground truth and the
-following are written to --metrics_output_dir (default: <output_csv's
-folder>/eval): pad_metrics.csv / pad_metrics.json, metrics_summary.png,
-roc_curve.png, pr_curve.png.
-
-The dataset-loading and metrics/plotting code lives in ../common/pad_eval.py
-and is shared with the other methods, not specific to this one.
+--input_dir: needs real/spoof subfolders (or use --labels_csv for a flat folder)
+--output_csv: Writes per-image scores
+--metrics_output_dir (default: <output_csv folder>/eval): Saves metrics/plots
 """
+from __future__ import annotations
 
 import argparse
 import csv
@@ -71,7 +40,12 @@ IMG_EXTS = {".png", ".jpg", ".jpeg", ".bmp"}
 
 
 def score_images(image_paths, root):
-    """rel_key -> (score or None, error or None)"""
+    """Run DeepFace anti-spoofing over a list of images, returning a single continuous attack_score per image
+    (0=confidently real, 1=confidently fake), keyed by path relative to `root`.
+    Args:
+        image_paths: list of image file paths to score.
+        root: base directory used to compute each image's rel_key.
+    """
     results = {}
     for path in image_paths:
         key = rel_key(path, root)
@@ -86,7 +60,7 @@ def score_images(image_paths, root):
             results[key] = (None, "NO_FACE_DETECTED")
             continue
 
-        # first/largest detected face, matching detect.py's convention
+        # first/largest detected face, matching infer.py's convention
         face = faces[0]
         is_real = face["is_real"]
         conf = face["antispoof_score"]
@@ -97,6 +71,14 @@ def score_images(image_paths, root):
 
 
 def write_scores_csv(image_paths, results, threshold, output_csv, root):
+    """Write per-image attack scores and threshold-based predictions to CSV.
+    Args:
+        image_paths: list of image file paths, in the order to write rows.
+        results: dict from score_images(), keyed by rel_key -> (score, error).
+        threshold: cutoff applied to attack_score to derive predicted_label.
+        output_csv: path to write the CSV to (parent folders created if needed).
+        root: base directory used to recompute each path's rel_key.
+    """
     rows = []
     for path in image_paths:
         key = rel_key(path, root)
@@ -116,44 +98,29 @@ def write_scores_csv(image_paths, results, threshold, output_csv, root):
     return rows
 
 
-def main():
-    ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--input_dir", required=True, help="Folder of images to score")
-    ap.add_argument("--output_csv", required=True, help="Where to write the scores CSV")
-    ap.add_argument("--labeled_dir", default=None,
-                    help="Optional eval mode: folder with real/ and spoof/ subfolders "
-                         "(overrides --input_dir for which images get scored)")
-    ap.add_argument("--labels_csv", default=None,
-                    help="Optional eval mode: CSV with columns filename,label for images in --input_dir")
-    ap.add_argument("--metrics_output_dir", default=None,
-                    help="Where to save the PAD metrics table + ROC/PR curves "
-                         "(default: <output_csv's folder>/eval)")
-    ap.add_argument("--threshold", type=float, default=0.5,
-                    help="Configured decision threshold on the derived attack_score "
-                         "(default 0.5 matches DeepFace's own is_real decision boundary)")
-    args = ap.parse_args()
-
-    threshold = args.threshold
-
-    labels = None
-    if args.labeled_dir:
-        root = args.labeled_dir
-        image_paths, labels = gather_labeled_dataset(args.labeled_dir)
+def main(input_dir, output_csv, labels_csv, metrics_output_dir, threshold):
+    """Score all images in input_dir, write results CSV, and (if ground truth is available via labels_csv or
+    real/spoof subfolders) compute and save PAD metrics, plots, and a summary image.
+    Args:
+        input_dir: folder of images.
+        output_csv: path to write per-image scores to.
+        labels_csv: optional filename->label CSV for a flat input_dir.
+        metrics_output_dir: folder for metrics/plots.
+        threshold: cutoff applied to attack_score for predicted_label.
+    """
+    if labels_csv:
+        root = input_dir
+        image_paths = list_images(input_dir)
+        labels = load_labels_csv(labels_csv)
     else:
-        root = args.input_dir
-        image_paths = list_images(args.input_dir)
-        if args.labels_csv:
-            labels = load_labels_csv(args.labels_csv)
+        root = input_dir
+        image_paths, labels = gather_labeled_dataset(input_dir)
 
     print(f"Found {len(image_paths)} images")
     results = score_images(image_paths, root)
-    rows = write_scores_csv(image_paths, results, threshold, args.output_csv, root)
+    rows = write_scores_csv(image_paths, results, threshold, output_csv, root)
     n_errors = sum(1 for r in rows if r["error"])
-    print(f"Wrote {len(rows)} rows to {args.output_csv} ({n_errors} errors)")
-
-    if labels is None:
-        return
+    print(f"Wrote {len(rows)} rows to {output_csv} ({n_errors} errors)")
 
     y_true, y_score, missing = [], [], []
     for path in image_paths:
@@ -178,7 +145,7 @@ def main():
     y_score = np.array(y_score)
     metrics = compute_pad_metrics(y_true, y_score, threshold)
 
-    metrics_dir = args.metrics_output_dir or str(Path(args.output_csv).resolve().parent / "eval")
+    metrics_dir = metrics_output_dir or str(Path(output_csv).resolve().parent / "eval")
     csv_path, json_path = save_metrics_table(metrics, metrics_dir)
     img_path = save_metrics_image(metrics, metrics_dir)
     roc_path, pr_path = save_curves(y_true, y_score, metrics, metrics_dir)
@@ -192,4 +159,24 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--input_dir", required=True,
+                     help="Eval folder with real/ and spoof/ subfolders "
+                          "(or a flat folder of images if --labels_csv is given)")
+    ap.add_argument("--output_csv", required=True, help="Where to write the scores CSV")
+    ap.add_argument("--labels_csv", default=None,
+                     help="Optional: CSV with columns filename,label for a flat --input_dir, "
+                          "instead of the default real/spoof subfolder layout")
+    ap.add_argument("--metrics_output_dir", default=None,
+                     help="Where to save the PAD metrics table + ROC/PR curves "
+                          "(default: <output_csv's folder>/eval)")
+    ap.add_argument("--threshold", type=float, default=0.5,
+                     help="Configured decision threshold on the derived attack_score "
+                          "(default 0.5 matches DeepFace's own is_real decision boundary)")
+    args = ap.parse_args()
+    main(args.input_dir,
+         args.output_csv,
+         args.labels_csv,
+         args.metrics_output_dir,
+         args.threshold)
